@@ -1,31 +1,30 @@
 use core::hash::Hash;
 use std::{collections::BTreeMap, u32};
 
-use dam::structures::{Identifiable, Identifier, Time};
+use dam::structures::{Identifiable, Identifier};
 use dam::{
     context_tools::*,
     dam_macros::{context_macro, event_type},
 };
 use serde::{Deserialize, Serialize};
 
-use super::primitive::{FinalReduce, Token};
+use super::primitive::Token;
 
-pub struct ReduceData<ValType: Clone, StopType: Clone, const N: usize> {
+pub struct ReduceData<ValType: Clone, StopType: Clone> {
     pub in_val: Receiver<Token<ValType, StopType>>,
     pub out_val: Sender<Token<ValType, StopType>>,
-    pub sum: bool,
 }
 
 #[context_macro]
-pub struct Reduce<ValType: Clone, StopType: Clone, const N: usize> {
-    reduce_data: ReduceData<ValType, StopType, N>,
+pub struct Reduce<ValType: Clone, StopType: Clone> {
+    reduce_data: ReduceData<ValType, StopType>,
 }
 
-impl<ValType: DAMType, StopType: DAMType, const N: usize> Reduce<ValType, StopType, N>
+impl<ValType: DAMType, StopType: DAMType> Reduce<ValType, StopType>
 where
-    Reduce<ValType, StopType, N>: Context,
+    Reduce<ValType, StopType>: Context,
 {
-    pub fn new(reduce_data: ReduceData<ValType, StopType, N>) -> Self {
+    pub fn new(reduce_data: ReduceData<ValType, StopType>) -> Self {
         let red = Reduce {
             reduce_data,
             context_info: Default::default(),
@@ -111,50 +110,61 @@ pub struct SpaccLog {
 //     }
 // }
 
-impl<ValType, StopType, const N: usize> Context for Reduce<ValType, StopType, N>
+impl<ValType, StopType> Context for Reduce<ValType, StopType>
 where
-    ValType: DAMType
-        + std::ops::AddAssign<ValType>
-        + std::cmp::PartialEq
-        + std::ops::Add<Output = ValType>,
+    ValType: DAMType + std::ops::AddAssign<ValType> + std::cmp::PartialEq,
     StopType: DAMType
         + std::ops::Add<u32, Output = StopType>
         + std::ops::Sub<u32, Output = StopType>
         + std::cmp::PartialEq
         + std::convert::From<u32>,
-    // Token<f32, u32>: From<Token<ValType, StopType>>,  // Disabled for block sparse mode
-    Token<ValType, StopType>: FinalReduce<StopType, N>,
+    Token<f32, u32>: From<Token<ValType, StopType>>,
 {
     fn init(&mut self) {}
 
     fn run(&mut self) {
         let mut sum = ValType::default();
+        // let max_num = ValType::MAX;
+        // let max_tkn: StopType = max_num.into();
+        // let mut prev_tkn: StopType = max_tkn.clone();
+        // let mut prev_tkn: StopType = StopType::default();
         let id = self.id();
         let curr_id = Identifier { id: 0 };
+        // let mut prev_tkn = Token::default();
         let mut reduce_count: u64 = 0;
         loop {
             match self.reduce_data.in_val.dequeue(&self.time) {
                 Ok(curr_in) => match curr_in.data.clone() {
                     Token::Val(val) => {
-                        sum = sum + val.clone();
+                        sum += val.clone();
+                        // prev_tkn = Token::Val(val.clone());
                         reduce_count += 1;
                     }
                     Token::Stop(stkn) => {
                         let curr_time = self.time.tick();
-
-                        let final_reduce = if self.reduce_data.sum {
-                            Token::Val(sum.clone()).sum_axis()
-                        } else {
-                            Token::Val(sum.clone())
-                        };
+                        // if prev_tkn != Token::Stop(StopType::default())
+                        //     || stkn == StopType::default()
+                        // {
+                        //     self.reduce_data
+                        //         .out_val
+                        //         .enqueue(
+                        //             &self.time,
+                        //             ChannelElement::new(curr_time + 1, Token::Val(sum.clone())),
+                        //         )
+                        //         .unwrap();
+                        //     if id == curr_id {
+                        //         println!(
+                        //             "Out val: {:?}",
+                        //             // Token::<ValType, StopType>::Val(sum.clone())
+                        //             curr_in.data.clone()
+                        //         );
+                        //     }
+                        // }
                         self.reduce_data
                             .out_val
                             .enqueue(
                                 &self.time,
-                                ChannelElement::new(
-                                    curr_time + Time::new((N * N).try_into().unwrap()),
-                                    final_reduce,
-                                ),
+                                ChannelElement::new(curr_time + 1, Token::Val(sum.clone())),
                             )
                             .unwrap();
                         if id == curr_id {
@@ -164,7 +174,11 @@ where
                                 Token::<ValType, StopType>::Val(sum.clone())
                             );
                         }
-                        let _out_val = Token::<ValType, StopType>::Val(sum.clone());
+                        let out_val = Token::<ValType, StopType>::Val(sum.clone());
+                        // prev_tkn = out_val.clone();
+                        // let _ = dam::logging::log_event(&ReduceLog {
+                        // out_val: out_val.clone().into(),
+                        // });
                         sum = ValType::default();
                         if stkn != StopType::default() {
                             self.reduce_data
@@ -177,7 +191,11 @@ where
                                     ),
                                 )
                                 .unwrap();
-                            let _stk = Token::<ValType, StopType>::Stop(stkn.clone() - 1);
+                            let stk = Token::<ValType, StopType>::Stop(stkn.clone() - 1);
+                            // prev_tkn = stk.clone();
+                            // let _ = dam::logging::log_event(&ReduceLog {
+                            // out_val: stk.clone().into(),
+                            // });
                             if id == curr_id {
                                 println!(
                                     "In val: {:?}, Out val: {:?}",
@@ -260,8 +278,8 @@ where
         + std::ops::Add<u32, Output = StopType>
         + std::ops::Sub<u32, Output = StopType>
         + std::cmp::PartialEq,
-    // Token<f32, u32>: From<Token<ValType, StopType>>,  // Disabled for block sparse mode
-    // Token<u32, u32>: From<Token<CrdType, StopType>>,  // Disabled for block sparse mode
+    Token<f32, u32>: From<Token<ValType, StopType>>,
+    Token<u32, u32>: From<Token<CrdType, StopType>>,
 {
     fn init(&mut self) {}
 
@@ -346,11 +364,10 @@ where
                             .out_val
                             .enqueue(&self.time, val_chan_elem)
                             .unwrap();
-                        // Logging disabled for block sparse mode
-                        // let _ = dam::logging::log_event(&SpaccLog {
-                        //     out_val: Token::Val(value.clone()).into(),
-                        //     out_crd: Token::Val(key.clone()).into(),
-                        // });
+                        let _ = dam::logging::log_event(&SpaccLog {
+                            out_val: Token::Val(value.clone()).into(),
+                            out_crd: Token::Val(key.clone()).into(),
+                        });
                         if self.id() == id.clone() || self.id() == id1.clone() {
                             // println!("Id: {:?}", self.id());
                             println!();
@@ -378,11 +395,10 @@ where
                         .out_crd_inner
                         .enqueue(&self.time, crd_stkn_chan_elem)
                         .unwrap();
-                    // Logging disabled for block sparse mode
-                    // let _ = dam::logging::log_event(&SpaccLog {
-                    //     out_val: Token::<ValType, StopType>::Stop(stkn.clone()).into(),
-                    //     out_crd: Token::<CrdType, StopType>::Stop(stkn.clone()).into(),
-                    // });
+                    let _ = dam::logging::log_event(&SpaccLog {
+                        out_val: Token::<ValType, StopType>::Stop(stkn.clone()).into(),
+                        out_crd: Token::<CrdType, StopType>::Stop(stkn.clone()).into(),
+                    });
                     accum_storage.clear();
                     if self.id() == id.clone() || self.id() == id1.clone() {
                         // println!("Id: {:?}", self.id());
@@ -440,11 +456,10 @@ where
                                 .out_val
                                 .enqueue(&self.time, val_chan_elem)
                                 .unwrap();
-                            // Logging disabled for block sparse mode
-                            // let _ = dam::logging::log_event(&SpaccLog {
-                            //     out_val: Token::<ValType, StopType>::Done.into(),
-                            //     out_crd: Token::<CrdType, StopType>::Done.into(),
-                            // });
+                            let _ = dam::logging::log_event(&SpaccLog {
+                                out_val: Token::<ValType, StopType>::Done.into(),
+                                out_crd: Token::<CrdType, StopType>::Done.into(),
+                            });
                             println!("Reduce count: {}", reduce_count);
                             return;
                         }
@@ -533,8 +548,8 @@ where
         + std::ops::Add<u32, Output = StopType>
         + std::ops::Sub<u32, Output = StopType>
         + std::cmp::PartialEq,
-    // Token<f32, u32>: From<Token<ValType, StopType>>,  // Disabled for block sparse mode
-    // Token<u32, u32>: From<Token<CrdType, StopType>>,  // Disabled for block sparse mode
+    Token<f32, u32>: From<Token<ValType, StopType>>,
+    Token<u32, u32>: From<Token<CrdType, StopType>>,
     CrdType: PartialEq<CrdType>,
 {
     fn init(&mut self) {}
@@ -749,11 +764,10 @@ where
                                     .out_val
                                     .enqueue(&self.time, val_chan_elem)
                                     .unwrap();
-                                // Logging disabled for block sparse mode
-                                // let _ = dam::logging::log_event(&SpaccLog {
-                                //     out_val: Token::<ValType, StopType>::Done.into(),
-                                //     out_crd: Token::<CrdType, StopType>::Done.into(),
-                                // });
+                                let _ = dam::logging::log_event(&SpaccLog {
+                                    out_val: Token::<ValType, StopType>::Done.into(),
+                                    out_crd: Token::<CrdType, StopType>::Done.into(),
+                                });
                                 return;
                             }
                             _ => {
@@ -795,15 +809,9 @@ where
     }
 }
 
-// MaxReduceData - separate struct for MaxReduce that doesn't need const N or sum
-pub struct MaxReduceData<ValType: Clone, StopType: Clone> {
-    pub in_val: Receiver<Token<ValType, StopType>>,
-    pub out_val: Sender<Token<ValType, StopType>>,
-}
-
 #[context_macro]
 pub struct MaxReduce<ValType: Clone, StopType: Clone> {
-    max_reduce_data: MaxReduceData<ValType, StopType>,
+    max_reduce_data: ReduceData<ValType, StopType>,
     min_val: ValType,
 }
 
@@ -811,7 +819,7 @@ impl<ValType: DAMType, StopType: DAMType> MaxReduce<ValType, StopType>
 where
     MaxReduce<ValType, StopType>: Context,
 {
-    pub fn new(max_reduce_data: MaxReduceData<ValType, StopType>, min_val: ValType) -> Self {
+    pub fn new(max_reduce_data: ReduceData<ValType, StopType>, min_val: ValType) -> Self {
         let red = MaxReduce {
             max_reduce_data,
             min_val,
@@ -979,12 +987,11 @@ mod tests {
         let mut parent = ProgramBuilder::default();
         let (in_val_sender, in_val_receiver) = parent.unbounded();
         let (out_val_sender, out_val_receiver) = parent.unbounded();
-        let data = ReduceData::<u32, u32, 1> {
+        let data = ReduceData::<u32, u32> {
             in_val: in_val_receiver,
             out_val: out_val_sender,
-            sum: false,
         };
-        let red = Reduce::<u32, u32, 1>::new(data);
+        let red = Reduce::new(data);
         let gen1 = GeneratorContext::new(in_val, in_val_sender);
         let val_checker = PrinterContext::new(out_val_receiver);
         // let val_checker = CheckerContext::new(out_val, out_val_receiver);
@@ -1157,7 +1164,7 @@ mod tests {
         let mut parent = ProgramBuilder::default();
         let (in_val_sender, in_val_receiver) = parent.unbounded::<Token<f32, u32>>();
         let (out_val_sender, out_val_receiver) = parent.unbounded::<Token<f32, u32>>();
-        let data = MaxReduceData::<f32, u32> {
+        let data = ReduceData::<f32, u32> {
             in_val: in_val_receiver,
             out_val: out_val_sender,
         };
